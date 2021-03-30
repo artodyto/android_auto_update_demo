@@ -1,7 +1,15 @@
 package com.example.remoteupdatedemo;
 
+import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.app.ProgressDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -9,15 +17,30 @@ import android.os.Environment;
 import android.os.StrictMode;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import com.android.volley.NetworkResponse;
+import com.android.volley.Request;
+import com.android.volley.RequestQueue;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.toolbox.HttpHeaderParser;
+import com.android.volley.toolbox.HurlStack;
+import com.android.volley.toolbox.Volley;
 
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.HashMap;
+import java.util.Map;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -26,102 +49,65 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        String url = "<your apk location here. e.g. http://localhost/artifacts/app-debug.apk>";
+
         TextView uploadUrl = findViewById(R.id.your_url);
         Button uploadButton = findViewById(R.id.updateButton);
 
+        String version = "1.0.0";
+
+        uploadUrl.setText("CURRENT VERSION: " + version);
+
+
         uploadButton.setOnClickListener(v -> {
-            new DownloadFileFromURL().execute("http://www.yourwebsite.com/download/yourfile.apk");
+            AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Update Started")
+                    .setMessage("Please wait.");
+
+            AlertDialog alertDialog = alertDialogBuilder.create();
+            alertDialog.show();
+
+            String destination = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) + "/";
+            //Your file name
+            String fileName = "app-debug.apk";
+            destination += fileName;
+            final Uri uri = Uri.parse("file://" + destination);
+
+            //Delete update file if exists
+            File file = new File(destination);
+            if (file.exists())
+                //file.delete() - test this, I think sometimes it doesnt work
+                file.delete();
+
+            //set download manager
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+
+            //set destination
+            request.setDestinationUri(uri);
+
+            // get download service and enqueue file
+            final DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            final long downloadId = manager.enqueue(request);
+
+            //set BroadcastReceiver to install app when .apk is downloaded
+            BroadcastReceiver onComplete = new BroadcastReceiver() {
+                public void onReceive(Context context, Intent intent) {
+                    Intent install = new Intent(Intent.ACTION_VIEW);
+                    install.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    install.setDataAndType(uri, manager.getMimeTypeForDownloadedFile(downloadId));
+                    // Toast.makeText(context, "Download Finished.", Toast.LENGTH_SHORT).show();
+                    startActivity(install);
+
+                    // close dialog
+                    alertDialog.dismiss();
+
+                    unregisterReceiver(this);
+                    finish();
+                }
+            };
+            //register receiver for when .apk download is compete
+            registerReceiver(onComplete, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
         });
-
-    }
-
-    class DownloadFileFromURL extends AsyncTask<String, String, String> {
-        ProgressDialog pd;
-        String pathFolder = "";
-        String pathFile = "";
-
-        @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
-            pd = new ProgressDialog(MainActivity.this);
-            pd.setTitle("Processing...");
-            pd.setMessage("Please wait.");
-            pd.setMax(100);
-            pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-            pd.setCancelable(true);
-            pd.show();
-        }
-
-        @Override
-        protected String doInBackground(String... f_url) {
-            int count;
-
-            try {
-                pathFolder = Environment.getExternalStorageDirectory() + "/YourAppDataFolder";
-                pathFile = pathFolder + "/yourappname.apk";
-                File futureStudioIconFile = new File(pathFolder);
-                if (!futureStudioIconFile.exists()) {
-                    futureStudioIconFile.mkdirs();
-                }
-
-                URL url = new URL(f_url[0]);
-                URLConnection connection = url.openConnection();
-                connection.connect();
-
-                // this will be useful so that you can show a tipical 0-100%
-                // progress bar
-                int lengthOfFile = connection.getContentLength();
-
-                // download the file
-                InputStream input = new BufferedInputStream(url.openStream());
-                FileOutputStream output = new FileOutputStream(pathFile);
-
-                byte data[] = new byte[1024]; //anybody know what 1024 means ?
-                long total = 0;
-                while ((count = input.read(data)) != -1) {
-                    total += count;
-                    // publishing the progress....
-                    // After this onProgressUpdate will be called
-                    publishProgress("" + (int) ((total * 100) / lengthOfFile));
-
-                    // writing data to file
-                    output.write(data, 0, count);
-                }
-
-                // flushing output
-                output.flush();
-
-                // closing streams
-                output.close();
-                input.close();
-
-
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
-            return pathFile;
-        }
-
-        protected void onProgressUpdate(String... progress) {
-            // setting progress percentage
-            pd.setProgress(Integer.parseInt(progress[0]));
-        }
-
-        @Override
-        protected void onPostExecute(String file_url) {
-            if (pd != null) {
-                pd.dismiss();
-            }
-            StrictMode.VmPolicy.Builder builder = new StrictMode.VmPolicy.Builder();
-            StrictMode.setVmPolicy(builder.build());
-            Intent i = new Intent(Intent.ACTION_VIEW);
-
-            i.setDataAndType(Uri.fromFile(new File(file_url)), "application/vnd.android.package-archive");
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-            getApplicationContext().startActivity(i);
-        }
 
     }
 }
